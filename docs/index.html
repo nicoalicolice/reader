@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Something to read</title>
+<style>
+:root{color-scheme:light dark}
+body{font:18px/1.6 Georgia,serif;max-width:40rem;margin:2rem auto;padding:0 1rem}
+nav a{margin-right:1rem;font:15px sans-serif;padding:.4rem 0;display:inline-block}
+.meta{font:14px sans-serif;opacity:.7}
+h1{line-height:1.2}
+button{font:16px sans-serif;padding:.7rem 1rem;margin:.25rem .25rem .25rem 0;cursor:pointer}
+a.read button{background:#2a6;color:#fff;border:0;border-radius:6px}
+li{margin:.8rem 0}
+@media(max-width:600px){.rate button{width:100%;margin:.25rem 0}}
+</style>
+<nav><a href="#">any</a><a href="#essay">essays</a><a href="#paper">papers</a><a href="#archive">archive</a></nav>
+<main id="m"></main>
+<script>
+// State lives in this browser only (localStorage). Use archive > export/import to move it between devices.
+const KEY = "reader-v1";
+let S = {seen: {}, log: {}};
+try { S = JSON.parse(localStorage[KEY]) || S } catch {}
+const save = () => { try { localStorage[KEY] = JSON.stringify(S) } catch {} };
+const esc = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+const toks = t => new Set(t.toLowerCase().match(/[a-z]{4,}/g) || []);
+let items = [], cur = null;
+
+function pick(kind) {
+  const w = {};
+  for (const {item, r} of Object.values(S.log))
+    if (r) for (const t of toks(item.title + " " + item.summary)) w[t] = (w[t] || 0) + r;
+  const rows = items.filter(i => !S.seen[i.url] && (!kind || i.kind === kind))
+    .map(i => [i.base + .3 * [...toks(i.title + " " + i.summary)].reduce((a, t) => a + (w[t] || 0), 0), i])
+    .sort((a, b) => b[0] - a[0]);
+  // random among top 10 = free exploration
+  return rows.length ? rows[Math.random() * Math.min(10, rows.length) | 0][1] : null;
+}
+
+function card(kind) {
+  cur = pick(kind);
+  if (!cur) return $m("<p>Nothing left. The list refreshes daily.</p>");
+  const min = cur.words && cur.kind === "essay" ? ` · ~${Math.round(cur.words / 200)} min` : "";
+  $m(`<p class=meta>${esc(cur.kind)} · ${esc(cur.source)}${min}</p>
+    <h1>${esc(cur.title)}</h1><p>${esc(cur.summary)}…</p>
+    <a class=read href="${esc(cur.url)}" target=_blank rel=noopener><button>Read it ↗</button></a>
+    <div class=rate><button data-r=1>👍 more like this</button><button data-r=-1>👎 less</button><button data-r=0>skip</button></div>`);
+  document.querySelector(".read").onclick = () => {
+    (S.log[cur.url] ||= {item: cur, r: 0}).read_at = new Date().toISOString();
+    S.seen[cur.url] = 1; save();
+  };
+  document.querySelectorAll(".rate button").forEach(b => b.onclick = () => {
+    const r = +b.dataset.r;
+    S.seen[cur.url] = 1;
+    if (r || S.log[cur.url]) (S.log[cur.url] ||= {item: cur}).r = r;
+    save(); card(kind);
+  });
+}
+
+function archive() {
+  const rows = Object.values(S.log).filter(e => e.read_at).sort((a, b) => b.read_at.localeCompare(a.read_at));
+  $m(`<h1>Archive (${rows.length})</h1><ul>${rows.map(e => `<li><a href="${esc(e.item.url)}" target=_blank rel=noopener>${esc(e.item.title)}</a>
+    <div class=meta>${esc(e.item.kind)} · ${esc(e.item.source)} · ${e.read_at.slice(0, 10)}${e.r ? " · " + (e.r > 0 ? "👍" : "👎") : ""}</div></li>`).join("") || "<li>Nothing read yet.</li>"}</ul>
+    <p><button id=ex>Export</button> <label>Import <input type=file id=im accept=.json></label></p>`);
+  document.getElementById("ex").onclick = () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(S)], {type: "application/json"}));
+    a.download = "reader-archive.json"; a.click();
+  };
+  document.getElementById("im").onchange = async e => {
+    const o = JSON.parse(await e.target.files[0].text());
+    S.seen = {...o.seen, ...S.seen}; S.log = {...o.log, ...S.log}; save(); archive();
+  };
+}
+
+const $m = h => document.getElementById("m").innerHTML = h;
+const route = () => location.hash === "#archive" ? archive() : card(location.hash.slice(1));
+fetch("items.json").then(r => r.json()).then(j => { items = j; route(); addEventListener("hashchange", route); })
+  .catch(() => $m("<p>Couldn't load items.json.</p>"));
+</script>
